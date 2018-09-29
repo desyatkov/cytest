@@ -1,0 +1,62 @@
+defaults: &defaults
+  working_directory: ~/cypress
+  docker:
+  - image: cypress/browsers:chrome67
+
+version: 2
+jobs:
+  build:
+    <<: *defaults
+    steps:
+    - checkout
+    # find compatible cache from previous build,
+    # it should have same dependencies installed from package.json checksum
+    - restore_cache:
+        keys:
+        - cache-{{ .Branch }}-{{ checksum "package.json" }}
+    - run:
+        name: Install Dependencies
+        command: npm ci
+    # run verify and then save cache.
+    # this ensures that the Cypress verified status is cached too
+    - run: npm run cy:verify
+    # save new cache folder if needed
+    - save_cache:
+        key: cache-{{ .Branch }}-{{ checksum "package.json" }}
+        paths:
+        - ~/.npm
+        - ~/.cache
+    - persist_to_workspace:
+        root: ~/
+        paths:
+        - cypress
+        - .cache/Cypress
+
+  1x-electron:
+    <<: *defaults
+    steps:
+    # restore application and Cypress binary before running the test command
+    - attach_workspace:
+        at: ~/
+    - run:
+        command: npm start
+        background: true
+    # run all tests and pass group name (should be "1x-electron" in this case)
+    - run: npm run e2e:record
+
+workflows:
+  version: 2
+  # this workflow has 4 jobs to show case Cypress --parallel and --group flags
+  # "build" installs NPM dependencies so other jobs don't have to
+  #   └ "1x-electron" runs all specs just like Cypress pre-3.1.0 runs them
+  #   └ "4x-electron" job load balances all specs across 4 CI machines
+  #   └ "2x-chrome" load balances all specs across 2 CI machines and uses Chrome browser
+  build_and_test:
+    jobs:
+    - build
+    # after installing dependencies in the "build" job
+    # run all tests in several groups
+    #     group "1x-electron"
+    - 1x-electron:
+        requires:
+        - build
